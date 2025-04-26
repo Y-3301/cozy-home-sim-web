@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Device, useSmartHome } from '@/contexts/SmartHomeContext';
 import { Camera } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
@@ -10,8 +10,47 @@ interface CameraDeviceProps {
 }
 
 export function CameraDevice({ device }: CameraDeviceProps) {
-  const { toggleDevice, updateDeviceData } = useSmartHome();
+  const { toggleDevice, updateDeviceData, addSecurityEvent } = useSmartHome();
   const isRecording = device.data?.recording || false;
+  const autoRecord = device.settings?.autoRecord || false;
+  const notifyOnMotion = device.settings?.notifyOnMotion || false;
+
+  // Check for motion detection from other sensors in the same room
+  useEffect(() => {
+    // Only run effect if the device is on and has autoRecord enabled
+    if (device.isOn && autoRecord) {
+      // Set up an interval to check for motion in the same room
+      const motionCheckInterval = setInterval(() => {
+        const { devices } = useSmartHome();
+        
+        // Find motion sensors in the same room
+        const motionSensors = devices.filter(d => 
+          d.type === 'motion' && 
+          d.room === device.room && 
+          d.isOn && 
+          d.data?.motion === true
+        );
+        
+        // If motion is detected and camera is not recording, start recording
+        if (motionSensors.length > 0 && !isRecording) {
+          updateDeviceData(device.id, { recording: true });
+          
+          if (notifyOnMotion) {
+            addSecurityEvent({
+              deviceId: device.id,
+              deviceName: device.name,
+              deviceType: device.type,
+              room: device.room,
+              event: 'Auto-recording started due to motion',
+              priority: 'medium',
+            });
+          }
+        }
+      }, 5000); // Check every 5 seconds
+      
+      return () => clearInterval(motionCheckInterval);
+    }
+  }, [device.isOn, autoRecord, device.id, isRecording, device.room, notifyOnMotion]);
 
   const toggleRecording = () => {
     updateDeviceData(device.id, { recording: !isRecording });
@@ -41,6 +80,13 @@ export function CameraDevice({ device }: CameraDeviceProps) {
             {isRecording && (
               <div className="absolute top-2 right-2">
                 <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse-subtle"></div>
+              </div>
+            )}
+            {autoRecord && (
+              <div className="absolute bottom-2 left-2">
+                <Badge variant="outline" className="bg-black/20 text-white border-none text-[10px]">
+                  Auto-Record {autoRecord ? 'On' : 'Off'}
+                </Badge>
               </div>
             )}
           </div>

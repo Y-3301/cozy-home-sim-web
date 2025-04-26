@@ -21,6 +21,16 @@ export interface Device {
     mode?: 'cooling' | 'heating' | 'off';
     brightness?: number;
   };
+  settings?: {
+    autoRecord?: boolean;
+    notifyOnMotion?: boolean;
+    autoClearSeconds?: number;
+    sensitivity?: 'low' | 'medium' | 'high';
+    defaultBrightness?: number;
+    autoOffMinutes?: number;
+    defaultTemp?: number;
+    defaultMode?: 'cooling' | 'heating';
+  };
 }
 
 export interface SecurityEvent {
@@ -56,8 +66,11 @@ interface SmartHomeContextType {
   automationRules: AutomationRule[];
   toggleDevice: (deviceId: string) => void;
   updateDeviceData: (deviceId: string, data: Partial<Device['data']>) => void;
+  updateDeviceSettings: (deviceId: string, settings: Partial<Device['settings']>) => void;
   addSecurityEvent: (event: Omit<SecurityEvent, 'id' | 'timestamp'>) => void;
   toggleAutomationRule: (ruleId: string) => void;
+  addAutomationRule: (rule: Omit<AutomationRule, 'id' | 'active'>) => void;
+  removeAutomationRule: (ruleId: string) => void;
   clearSecurityEvents: () => void;
 }
 
@@ -73,6 +86,10 @@ const initialDevices: Device[] = [
     isOn: false,
     data: {
       brightness: 80,
+    },
+    settings: {
+      defaultBrightness: 80,
+      autoOffMinutes: 0
     }
   },
   {
@@ -83,6 +100,10 @@ const initialDevices: Device[] = [
     isOn: false,
     data: {
       brightness: 100,
+    },
+    settings: {
+      defaultBrightness: 100,
+      autoOffMinutes: 0
     }
   },
   {
@@ -93,6 +114,10 @@ const initialDevices: Device[] = [
     isOn: false,
     data: {
       brightness: 60,
+    },
+    settings: {
+      defaultBrightness: 60,
+      autoOffMinutes: 0
     }
   },
   {
@@ -104,6 +129,10 @@ const initialDevices: Device[] = [
     data: {
       temperature: 23,
       mode: 'cooling',
+    },
+    settings: {
+      defaultTemp: 23,
+      defaultMode: 'cooling'
     }
   },
   {
@@ -114,6 +143,10 @@ const initialDevices: Device[] = [
     isOn: true,
     data: {
       motion: false,
+    },
+    settings: {
+      sensitivity: 'medium',
+      autoClearSeconds: 30
     }
   },
   {
@@ -124,6 +157,10 @@ const initialDevices: Device[] = [
     isOn: true,
     data: {
       recording: true,
+    },
+    settings: {
+      autoRecord: false,
+      notifyOnMotion: true
     }
   },
   {
@@ -146,6 +183,10 @@ const initialDevices: Device[] = [
       temperature: 22,
       targetTemp: 22,
       mode: 'cooling',
+    },
+    settings: {
+      defaultTemp: 22,
+      defaultMode: 'cooling'
     }
   },
   {
@@ -230,6 +271,19 @@ export const SmartHomeProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }));
   }, []);
 
+  // Function to update device settings
+  const updateDeviceSettings = useCallback((deviceId: string, settings: Partial<Device['settings']>) => {
+    setDevices(prevDevices => prevDevices.map(device => {
+      if (device.id === deviceId) {
+        return { 
+          ...device, 
+          settings: { ...device.settings, ...settings } 
+        };
+      }
+      return device;
+    }));
+  }, []);
+
   // Function to add security event
   const addSecurityEvent = useCallback((event: Omit<SecurityEvent, 'id' | 'timestamp'>) => {
     const newEvent = {
@@ -250,6 +304,22 @@ export const SmartHomeProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         description: `${event.deviceName} in ${event.room}`,
       });
     }
+  }, []);
+
+  // Function to add automation rule
+  const addAutomationRule = useCallback((rule: Omit<AutomationRule, 'id' | 'active'>) => {
+    const newRule = {
+      ...rule,
+      id: `rule-${Date.now()}`,
+      active: true,
+    };
+    
+    setAutomationRules(prev => [...prev, newRule]);
+  }, []);
+
+  // Function to remove automation rule
+  const removeAutomationRule = useCallback((ruleId: string) => {
+    setAutomationRules(prev => prev.filter(rule => rule.id !== ruleId));
   }, []);
 
   // Function to toggle automation rule
@@ -362,6 +432,62 @@ export const SmartHomeProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, [devices, automationRules, toggleDevice, updateDeviceData, addSecurityEvent]);
 
+  // Auto-clear motion after configured seconds
+  useEffect(() => {
+    const motionSensors = devices.filter(d => 
+      d.type === 'motion' && 
+      d.isOn && 
+      d.data?.motion === true && 
+      d.settings?.autoClearSeconds
+    );
+    
+    motionSensors.forEach(sensor => {
+      const clearTime = sensor.settings?.autoClearSeconds || 30;
+      
+      const timer = setTimeout(() => {
+        updateDeviceData(sensor.id, { motion: false });
+      }, clearTime * 1000);
+      
+      return () => clearTimeout(timer);
+    });
+  }, [devices, updateDeviceData]);
+  
+  // Auto-off lights based on settings
+  useEffect(() => {
+    const lightsWithAutoOff = devices.filter(d => 
+      d.type === 'light' && 
+      d.isOn && 
+      d.settings?.autoOffMinutes && 
+      d.settings.autoOffMinutes > 0
+    );
+    
+    const timers: { [key: string]: NodeJS.Timeout } = {};
+    
+    lightsWithAutoOff.forEach(light => {
+      const offTime = light.settings?.autoOffMinutes || 0;
+      
+      if (offTime > 0) {
+        timers[light.id] = setTimeout(() => {
+          toggleDevice(light.id);
+          
+          addSecurityEvent({
+            deviceId: light.id,
+            deviceName: light.name,
+            deviceType: light.type,
+            room: light.room,
+            event: 'Auto-off timer completed',
+            priority: 'low',
+          });
+        }, offTime * 60 * 1000);
+      }
+    });
+    
+    return () => {
+      // Clear all timers on cleanup
+      Object.values(timers).forEach(timer => clearTimeout(timer));
+    };
+  }, [devices, toggleDevice, addSecurityEvent]);
+
   return (
     <SmartHomeContext.Provider value={{
       devices,
@@ -369,8 +495,11 @@ export const SmartHomeProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       automationRules,
       toggleDevice,
       updateDeviceData,
+      updateDeviceSettings,
       addSecurityEvent,
       toggleAutomationRule,
+      addAutomationRule,
+      removeAutomationRule,
       clearSecurityEvents,
     }}>
       {children}
