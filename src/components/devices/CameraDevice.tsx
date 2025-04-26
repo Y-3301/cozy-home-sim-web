@@ -53,7 +53,12 @@ export function CameraDevice({ device }: CameraDeviceProps) {
               ) : (
                 <Badge variant="outline">Standby</Badge>
               )}
-              <Switch size="sm" checked={isRecording} onCheckedChange={toggleRecording} disabled={!device.isOn} />
+              <Switch 
+                checked={isRecording} 
+                onCheckedChange={toggleRecording} 
+                disabled={!device.isOn} 
+                className="scale-90" // Using a class to make it slightly smaller instead of the size prop
+              />
             </div>
           </div>
         </div>
